@@ -1,0 +1,12 @@
+services:
+  strata:
+    build: .
+    ports:
+      - "8787:8787"
+    volumes:
+      - strata-data:/data
+    gpus: all
+    shm_size: 4gb
+    restart: unless-stopped
+volumes:
+  strata-data:

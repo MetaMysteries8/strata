@@ -1,0 +1,7 @@
+import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import vm from 'node:vm';
+const source=fs.readFileSync(new URL('../app/src/main/assets/theme.js',import.meta.url),'utf8');
+function fixture(preference,dark=false,broken=false){let saved=preference,listener;const root={dataset:{}};const media={matches:dark,addEventListener:(_,fn)=>listener=fn};const c={document:{documentElement:root},localStorage:{getItem:()=>{if(broken)throw Error();return saved},setItem:(_,v)=>{if(broken)throw Error();saved=v}},window:{matchMedia:()=>media}};vm.runInNewContext(source,c);return{root,theme:c.window.StrataTheme,get saved(){return saved},system:value=>{media.matches=value;listener()}}}
+test('saved dark applies before app initialization',()=>{const f=fixture('dark');assert.equal(f.root.dataset.theme,'dark');f.system(false);assert.equal(f.root.dataset.theme,'dark')});
+test('selection persists across reload',()=>{const f=fixture('system');f.theme.set('dark');assert.equal(fixture(f.saved).root.dataset.theme,'dark');f.theme.set('light');assert.equal(f.root.dataset.theme,'light')});
+test('system tracks device preference',()=>{const f=fixture('system',true);assert.equal(f.root.dataset.theme,'dark');f.system(false);assert.equal(f.root.dataset.theme,'light')});
+test('invalid preference and unavailable storage handled',()=>{assert.equal(fixture('bad').theme.get(),'system');const f=fixture(null,true,true);f.theme.set('light');f.theme.set('bad');assert.equal(f.theme.get(),'light')});

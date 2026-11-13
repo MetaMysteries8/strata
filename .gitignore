@@ -1,0 +1,19 @@
+.gradle/
+local.properties
+**/build/
+*.jks
+.idea/
+
+**/node_modules/
+**/__pycache__/
+**/.pytest_cache/
+**/.venv/
+server/strata-data/
+server/*.key
+.env
+
+# Recreated and checksum-verified by scripts/prepare.py
+app/libs/*.aar
+app/src/main/assets/viewer.js
+app/src/main/assets/modal-runtime.zip
+dist/

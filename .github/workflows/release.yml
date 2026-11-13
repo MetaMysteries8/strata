@@ -1,0 +1,66 @@
+name: Build and release Strata
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: strata-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: viewer-src/package-lock.json
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: |
+            server/requirements.txt
+            server/android_runtime/requirements.txt
+      - name: Prepare build dependencies
+        run: |
+          python -m pip install -r server/requirements.txt -r server/android_runtime/requirements.txt pytest httpx
+          npm ci --prefix viewer-src
+          npm run build --prefix viewer-src
+          python scripts/prepare.py
+          sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+      - name: Test server and viewer
+        run: |
+          PYTHONPATH=server python -m pytest -q server/tests
+          node --test ui-tests/*.test.mjs viewer-src/tests/*.test.mjs
+      - name: Build and test Android
+        run: bash gradlew --no-daemon :app:assembleDebug :app:testDebugUnitTest
+      - name: Package verified release assets
+        run: |
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs app/build/outputs/apk/debug/app-debug.apk
+          "$ANDROID_HOME/build-tools/35.0.0/zipalign" -c -p 4 app/build/outputs/apk/debug/app-debug.apk
+          python scripts/package_release.py
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: strata-release
+          path: dist/
+          retention-days: 14
+      - name: Publish a new version
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python scripts/publish_release.py

@@ -1,0 +1,7 @@
+fastapi>=0.115,<1
+uvicorn[standard]>=0.30,<1
+pillow>=10,<13
+numpy>=1.26,<3
+scipy>=1.11,<2
+trimesh>=4.4,<5
+plyfile>=1.0,<2
