@@ -49,7 +49,7 @@ class Controller:
             return dict(service='strata-modal-runtime',protocol=1,version=VERSION,auth=dict(self.auth),deployment=deployment,loginReady=bool(self.login_url),code=self.login_code,hasProfile=(self.root/'modal.toml').exists(),hasConnection=self.saved_connection() is not None)
     def maybe_verify(self):
         with self.lock:
-            if self.occupied() or not (self.root/'modal.toml').exists() or time.monotonic()-self.last_verified<300:return
+            if self.occupied() or not (self.root/'modal.toml').exists() or (self.last_verified>0 and time.monotonic()-self.last_verified<300):return
             self.cancelled.clear()
             self.worker=threading.Thread(target=self.verify,daemon=True);self.worker.start()
     def occupied(self):return self.worker is not None and self.worker.is_alive()

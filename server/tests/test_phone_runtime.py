@@ -92,7 +92,10 @@ def test_account_verification_can_be_cancelled_even_if_cli_ignores_term(tmp_path
  assert not c.worker.is_alive() and time.monotonic()-start<5
  assert c.state()['auth']['phase']=='cancelled'
 
-def test_health_rechecks_stale_credentials_without_a_retry_storm(tmp_path):
+def test_health_rechecks_stale_credentials_without_a_retry_storm(tmp_path,monkeypatch):
+ # A fresh VM/phone can have less than five minutes of monotonic uptime.
+ from android_runtime import companion
+ monkeypatch.setattr(companion,'time',SimpleNamespace(monotonic=lambda:100.0))
  c,client=runtime(tmp_path);(c.root/'modal.toml').touch()
  script=c.source/'expired.py';script.write_text('import sys\nsys.exit(1)\n');c.cli=[sys.executable,str(script)]
  c.auth={'phase':'signed_in','workspace_id':'ac-old'};c.last_verified=0
