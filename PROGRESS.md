@@ -1,3 +1,7 @@
+# Mesh failure recovery: 0.3.1
+
+The reported empty-triangle failure is now recoverable where COLMAP's alternate Delaunay mesher produces a valid surface. Dense point/normal diagnostics and finite/nondegenerate mesh checks were added. Both mode handles mesh/splat errors independently; usable outputs and dense points remain downloadable with partial warnings and per-output outcomes. Android preserves those warnings and exposes dense-point PLY export. Cancellation still stops further work. No live scan retry or cloud deployment was performed.
+
 # Repository release work: 0.3.0
 
 Implemented GitHub Actions builds/releases, one version source in release.json, generated asset preparation with a pinned native dependency checksum, verified APK/runtime manifests, and Android update checking/download/install controls. Preview package/signature is retained. Updates require user download/install actions; APK checks do not change cloud deployments.

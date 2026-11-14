@@ -50,7 +50,7 @@ object Store {
             val remote=try { JSONObject(File(dir,"remote.json").readText()) } catch(_:Exception) { JSONObject() }
             val status=state(dir)
             if(dir.name==RemoteService.observedProject && RemoteService.lastContact>0) status.put("lastContact",RemoteService.lastContact)
-            meta(dir).put("state",status).put("hasModel",model!=null && !bad).put("invalidModel",bad).put("modelError",if(bad) validation.optString("error") else "").put("hasMesh",mesh(dir)!=null).put("hasRemote",remote.has("id")).put("remoteId",remote.optString("id")).put("remoteMode",remote.optString("mode")).put("remoteDone",remote.optBoolean("complete")).put("hasDataset",File(dir,"dataset.zip").exists()).put("bytes",dir.walkTopDown().filter { it.isFile }.sumOf { it.length() })
+            meta(dir).put("state",status).put("hasModel",model!=null && !bad).put("invalidModel",bad).put("modelError",if(bad) validation.optString("error") else "").put("hasMesh",mesh(dir)!=null).put("hasDensePoints",File(dir,"output/dense-points.ply").isFile).put("hasRemote",remote.has("id")).put("remoteId",remote.optString("id")).put("remoteMode",remote.optString("mode")).put("remoteDone",remote.optBoolean("complete")).put("hasDataset",File(dir,"dataset.zip").exists()).put("bytes",dir.walkTopDown().filter { it.isFile }.sumOf { it.length() })
         } catch (_:Exception) { null } }?.sortedByDescending { it.optLong("created") } ?: emptyList()
         return JSONArray(items)
     }

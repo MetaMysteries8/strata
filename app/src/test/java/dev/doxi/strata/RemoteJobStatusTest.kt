@@ -18,4 +18,13 @@ class RemoteJobStatusTest {
         assertEquals(0.0,status.getDouble("engineElapsed"),0.0)
         for(value in listOf(Double.NaN,Double.POSITIVE_INFINITY,-1.0,1e13))assertEquals(0.0,RemoteJobStatus.milliseconds(value),0.0)
     }
+    @Test fun partialResultsRetainFailuresAfterDownloadingAvailableArtifacts() {
+        val outcomes=JSONObject().put("mesh",JSONObject().put("status","failed").put("stage","meshing")).put("splat",JSONObject().put("status","complete"))
+        val result=RemoteJobStatus.completion(JSONObject().put("partial",true).put("outcomes",outcomes).put("message","Mesh had no triangles"))
+        assertTrue(result.getBoolean("partial"))
+        assertTrue(result.getString("message").contains("Mesh: failed"))
+        assertTrue(result.getString("message").contains("Splats: complete"))
+        assertEquals("failed",result.getJSONObject("outcomes").getJSONObject("mesh").getString("status"))
+        assertFalse(RemoteJobStatus.completion(JSONObject()).getBoolean("partial"))
+    }
 }

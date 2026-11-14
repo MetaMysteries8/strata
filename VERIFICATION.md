@@ -1,3 +1,11 @@
+# Verification: Preview 0.3.1
+
+Local Python checks: 69 passed, including eight mesh-recovery regressions. Local UI checks: 11 passed. The unchanged viewer loader checks and Android build/JVM tests are run by the release workflow. One new JVM test checks retained partial-result warnings; one new UI test checks failed/skipped stages.
+
+Recovery tests use synthetic real PLY point clouds/triangle surfaces and mock external commands. They reproduce an empty surface, validate Delaunay workspace arguments, parse exported GLB triangles, check mesh-fails/splat-succeeds and mesh-succeeds/splat-fails, permit authenticated partial artifact downloads while rejecting nonexistent meshes, fall back to original poses after alignment failure, preserve dense-only results, retain truthful failure with no artifacts, and stop after cancellation. The reported user's cloud/workspace was not accessible: actual empty-surface cause, CGAL availability, real GPU behavior, quality, and phone installation remain unverified here.
+
+Prior verification follows as historical evidence.
+
 # Verification: Preview 0.3.0
 
 Local checks: 38 Android JVM tests, 61 Python tests and 13 JavaScript tests pass (112 total). Android debug APK builds with SDK 35/JDK 21. The packaging script checks the APK package/version and retained Preview certificate before generating release hashes.

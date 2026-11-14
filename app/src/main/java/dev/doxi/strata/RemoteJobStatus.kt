@@ -4,8 +4,15 @@ import org.json.JSONObject
 
 object RemoteJobStatus {
     fun milliseconds(seconds:Double):Double=if(seconds.isFinite()&&seconds>0&&seconds<1e12) seconds*1000 else 0.0
+    fun completion(record:JSONObject):JSONObject {
+        val outcomes=record.optJSONObject("outcomes") ?: JSONObject()
+        val summary=listOf("mesh" to "Mesh","splat" to "Splats").mapNotNull { (key,label)->outcomes.optJSONObject(key)?.let { "$label: ${it.optString("status","unknown")}" } }.joinToString("; ")
+        return JSONObject().put("partial",record.optBoolean("partial"))
+            .put("outcomes",record.optJSONObject("outcomes") ?: JSONObject())
+            .put("message",if(record.optBoolean("partial")) "Downloaded available results. $summary. " + record.optString("message","Some outputs failed").take(2400) else "Server reconstruction downloaded and validated")
+    }
     fun details(record:JSONObject):JSONObject {
-        val result=JSONObject().put("stage",record.optString("stage")).put("serverPhase",record.optString("phase"))
+        val result=JSONObject().put("stage",record.optString("stage")).put("serverPhase",record.optString("phase")).put("outcomes",record.optJSONObject("outcomes") ?: JSONObject())
         for((source,target) in listOf("created" to "serverCreated","stage_started" to "stageStarted","worker_heartbeat" to "workerHeartbeat"))
             result.put(target,milliseconds(record.optDouble(source,0.0)))
         result.put("engine",record.optString("engine").take(80))

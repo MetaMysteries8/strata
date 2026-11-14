@@ -1,9 +1,17 @@
 # strata
 vibe coded app cause bored
 
-# Strata Preview 0.3.0
+# Strata Preview 0.3.1
 
 An independent Android scanner with local RGB/pose/depth capture, experimental on-device Gaussian training, an offline splat/mesh viewer, and optional reconstruction on your own GPU server. No Scaniverse libraries or assets are included.
+
+## Mesh recovery and partial results (0.3.1)
+
+An exit code of zero from COLMAP does not guarantee a usable surface. The reported failure occurred when the exported surface had no triangles. New workers check finite dense-cloud coordinates, report point/normal counts, validate nondegenerate triangle geometry, and try COLMAP Delaunay meshing using the full dense workspace if Poisson returns an invalid surface or exits with an error. Delaunay needs a COLMAP build with CGAL; an unavailable or unsuccessful fallback is reported explicitly. This does not prove the cause of the reported capture's empty surface or guarantee a high-quality mesh.
+
+In Both mode, a handled mesh failure now permits the requested splat training to continue; successful COLMAP camera alignment is reused, or original posed input is retained when alignment fails. A later splat failure keeps completed mesh exports. Valid dense points are retained independently and exportable as PLY. Available outputs finish with an explicit partial-result warning and per-output statuses; no available output still fails. Cancellation stops the pipeline without starting a fallback. Mesh-only failures can return dense points as partial results, without claiming a mesh exists. The app labels failed/skipped stages and preserves the failure summary after download.
+
+Install the APK through App updates. Finish/cancel active server jobs, then use Modal account → Update server from GitHub (requires the existing 0.3.0+ companion). The APK alone does not change deployed code. The failed job is not automatically retried; start a new reconstruction from its retained original capture after deploying. No account login, live deployment, GPU execution, or automatic scan upload was performed to develop this fix.
 
 ## Get updates on your phone
 

@@ -122,8 +122,9 @@ class RemoteService:Service() {
                             if(kind=="splat") Store.validateModel(project,destination)
                         } finally { pending.delete() }
                     }
-                    remote.put("complete",true);Store.atomic(File(project,"remote.json"),remote)
-                    state("Server reconstruction downloaded and validated","complete")
+                    val completion=RemoteJobStatus.completion(result)
+                    remote.put("complete",true).put("result",completion);Store.atomic(File(project,"remote.json"),remote)
+                    state(completion.getString("message"),"complete",completion)
                 } catch(e:Exception) { if(!stopped) state("Server job: ${e.message}. The original dataset is kept; use Resume/download to reconnect.","failed") }
                 finally { stopSelf() }
             }

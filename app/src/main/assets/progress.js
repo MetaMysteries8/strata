@@ -10,7 +10,9 @@ window.StrataProgress=(()=>{
   const mesh=p.remoteMode==='mesh'||p.remoteMode==='both';
   const splat=p.remoteMode!=='mesh';
   const route=['uploading','queued','loading',...(mesh?['alignment','undistorting','depth','fusion','meshing']:[]),...(splat?['training','exporting']:[]),'downloading','complete'];
-  return {stage,label:labels[stage]||stage.replaceAll('_',' '),route,index:route.indexOf(stage),submitted:Number(s.serverCreated)||0,contact:Number(s.lastContact)||0,heartbeat:Number(s.workerHeartbeat)||0,engine:String(s.engine||''),engineElapsed:Number(s.engineElapsed)||0,stageStarted:Number(s.stageStarted)||0,queued:stage==='queued',labels};
+  const failedStages=[],skippedStages=[];
+  for(const [kind,o] of Object.entries(s.outcomes||{})){if(o.status!=='failed')continue;const steps=kind==='mesh'?['alignment','undistorting','depth','fusion','meshing']:['training','exporting'];const index=Math.max(0,steps.indexOf(o.stage));failedStages.push(steps[index]);skippedStages.push(...steps.slice(index+1))}
+  return {failedStages,skippedStages,stage,label:s.partial&&stage==='complete'?'Ready · partial result':labels[stage]||stage.replaceAll('_',' '),route,index:route.indexOf(stage),submitted:Number(s.serverCreated)||0,contact:Number(s.lastContact)||0,heartbeat:Number(s.workerHeartbeat)||0,engine:String(s.engine||''),engineElapsed:Number(s.engineElapsed)||0,stageStarted:Number(s.stageStarted)||0,queued:stage==='queued',labels};
  }
  function workerMessage(stage,heartbeat,now=Date.now()){
   if(['complete','downloading','paused','cancelled','failed'].includes(stage))return '';

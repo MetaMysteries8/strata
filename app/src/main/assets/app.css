@@ -5,3 +5,7 @@
 .runtime-section{margin:16px 0;padding:15px;border:1px solid #bbb6;border-radius:10px}.runtime-section summary{font-weight:650;cursor:pointer}.runtime-section .full{width:100%;margin-top:12px}.progress-meta{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:12px 0}.progress-meta>div{padding:10px;border:1px solid #aaa4;border-radius:8px}.progress-meta small{display:block;font-size:10px;color:#8b8b96}.progress-meta strong{font-size:12px;font-weight:550}.stage-badge{display:inline-block;border:1px solid #eb575755;color:#d95757;padding:5px 8px;border-radius:6px;font-size:11px;margin:8px 0}.stage-list{padding-left:24px;margin:16px 0;font-size:11px;line-height:2}.stage-list li{color:#999}.stage-list li.done{color:#638d70}.stage-list li.current{color:inherit;font-weight:700}.job-card .stage-badge{margin-top:10px}.job-card{margin-top:14px}html[data-theme=dark] .stage-badge{color:#ffa4a4}
 
 .update-toggle{display:flex;align-items:center;gap:10px}.update-toggle input{width:auto;margin:0}#appUpdateInstall{margin-top:12px}
+
+.stage-list .stage-failed{color:var(--danger,#d88484);font-weight:600}
+
+.stage-list .stage-skipped{opacity:.55;text-decoration:line-through}
