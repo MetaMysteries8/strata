@@ -1,3 +1,11 @@
+# Verification: Preview 0.3.3
+
+Local server checks: 85 tests pass. Local viewer/UI checks: 16 tests pass. New saved-work regressions exercise CPU-only recovery, authenticated artifact downloads, auth and active/cancelled-job rejection, provider-idle checks, unchanged job identity, no duplicate dispatch, unreadable/escaped checkpoints, atomic snapshots surviving original deletion, bounded snapshot retention, a real subprocess stopped by the soft deadline, mesh commit before training, continuation with only remaining iterations and no COLMAP, export-only continuation, engine availability, and refusing fresh training when an expected checkpoint disappears. Synthetic Torch ZIP fixtures are never deserialized by CPU recovery.
+
+New native/JavaScript checks cover deadline/checkpoint telemetry, partial recovery metadata, and paused versus failed stages. The release workflow runs Android build/JVM tests and verifies the retained APK signature/alignment. Nerfstudio resume/export flags and additional-iteration semantics were checked against pinned 1.1.5 source; actual CUDA checkpoint loading/export, device installation, live Modal file survival and recovery remain untested. No live GPU request, deployment or original user data was accessed. Completed-output recovery depends on committed storage; it is not guaranteed to restore this user's timed-out job.
+
+Prior verification follows as historical evidence.
+
 # Verification: Preview 0.3.2
 
 Eight new Android JVM regressions exercise the actual ServerHttp client: query-only GET 303 retaining the job path/auth headers, upload POST 303 switching to GET without replay, upload 307/308 preserving exact 130,000-byte input and request ID, redirected artifact byte equality, unsafe-origin/malformed destination rejection without query-secret exposure, no second connection for blocked hosts, repeated-result redirect bounds and cancellation, and POST replay bounds. The streaming cases use local TCP HTTP servers; pure HTTPS policy/bounds cases use injected HttpURLConnection fixtures. They do not contact the user's Modal endpoint.

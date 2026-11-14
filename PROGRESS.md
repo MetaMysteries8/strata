@@ -1,3 +1,7 @@
+# Saved-work recovery and execution budget: 0.3.3
+
+The reported 7,200-second timeout now has a CPU-only recovery action for the same saved job and a separately confirmed GPU continuation. New workers reserve five minutes for saving, commit mesh outputs before training, preserve stable checkpoint snapshots, and report a save deadline/checkpoint step. The execution ceiling is not increased. Continued training skips COLMAP and consumes only remaining iterations; a missing expected checkpoint does not start fresh training. No automatic paid retry or live deployment was performed. The original timed-out job's saved-file availability is unverified.
+
 # Same-origin redirects: 0.3.2
 
 ServerHttp now follows bounded same-origin redirects for status, upload results and artifact downloads. 303 changes POST to GET; 307/308 preserve streamed bytes/idempotency keys with bounded replays. Cross-origin/unsafe destinations remain blocked without leaking credentials/query tokens. Existing saved endpoint/job identity is retained. Response timeouts allow Modal's 150-second result handoff; status polling keeps its own shorter timeout. This APK fix needs no cloud redeploy and is tested with synthetic local servers/connection fixtures.

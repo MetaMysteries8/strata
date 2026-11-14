@@ -185,10 +185,22 @@ class MainActivity : Activity() {
             check(!activeTraining()) { "Finish or cancel the current task first" };require(mode in listOf("splat","mesh","both") && preset in listOf("quick","detail","max"))
             val dir=Store.dir(this@MainActivity,id);check(File(dir,"dataset.zip").exists()) { "This scan has no original dataset" }
             val profile=SecureServer(this@MainActivity).get() ?: error("Connect a server in Settings first")
-            val message="Send this scan's original photos, camera poses, and seed points to ${profile.url} to reconstruct $mode? Phone capture stays local until you choose Upload. Your hosting provider may charge for GPU time and storage."
+            val message="Send this scan's original photos, camera poses, and seed points to ${profile.url} to reconstruct $mode? Phone capture stays local until you choose Upload. Your hosting provider may charge for GPU time and storage. Each Modal worker has a two-hour execution limit; long combined jobs may need an explicit continuation from saved work."
             AlertDialog.Builder(this@MainActivity).setTitle("Reconstruct on your server?").setMessage(message).setNegativeButton("Keep local",null).setPositiveButton("Upload and reconstruct") { _,_->notifications();startForegroundService(Intent(this@MainActivity,RemoteService::class.java).putExtra("id",id).putExtra("mode",mode).putExtra("preset",preset));main.postDelayed({refresh()},1000) }.show()
         } catch(e:Exception){error(e)} } }
         @JavascriptInterface fun resumeRemote(id:String) { runOnUiThread { try { check(!activeTraining());Store.dir(this@MainActivity,id);notifications();startForegroundService(Intent(this@MainActivity,RemoteService::class.java).putExtra("id",id).putExtra("resume",true));main.postDelayed({refresh()},1000) } catch(e:Exception){error(e)} } }
+        @JavascriptInterface fun recoverRemote(id:String) { savedRemote(id,false) }
+        @JavascriptInterface fun continueSavedRemote(id:String) { savedRemote(id,true) }
+        private fun savedRemote(id:String,continueSaved:Boolean) { runOnUiThread {try {
+            check(!activeTraining()){ "Finish the active task first" };val dir=Store.dir(this@MainActivity,id)
+            require(File(dir,"remote.json").isFile){"No saved server job"}
+            val savedStep=JSONObject(File(dir,"remote.json").readText()).optJSONObject("recovery")?.optLong("checkpoint_step",-1) ?: -1
+            AlertDialog.Builder(this@MainActivity).setTitle(if(continueSaved) "Continue saved GPU work?" else "Recover saved outputs?")
+                .setMessage(if(continueSaved) (if(savedStep>=0) "Continue from saved checkpoint step $savedStep. If it is missing or cannot load, training will not restart from scratch." else "No readable checkpoint was found. Start splat training from the beginning using saved mesh/alignment; COLMAP is skipped.")+" Photos are not uploaded again. Another GPU worker can use up to two hours and may incur charges. It stops early to save when possible. Unfinished training checkpoints may not load; no fresh reconstruction is started as a fallback." else "Inspect files already saved on this job's server and download valid outputs. This starts no GPU reconstruction. CPU requests and storage may still incur provider charges. Keep the existing deployment and volume.")
+                .setNegativeButton("Back",null).setPositiveButton(if(continueSaved) "Continue on GPU" else "Inspect saved files") {_,_->
+                    notifications();startForegroundService(Intent(this@MainActivity,RemoteService::class.java).putExtra("id",id).putExtra("resume",true).putExtra("expectedCheckpoint",savedStep).putExtra(if(continueSaved) "continueSaved" else "recover",true));main.postDelayed({refresh()},1000)
+                }.show()
+        }catch(e:Exception){error(e)} } }
         @JavascriptInterface fun back() { runOnUiThread { home() } }
         @JavascriptInterface fun importDataset() { runOnUiThread {
             startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).setType("application/zip").addCategory(Intent.CATEGORY_OPENABLE),10)

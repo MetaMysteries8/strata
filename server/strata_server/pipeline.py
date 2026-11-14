@@ -1,5 +1,6 @@
 from __future__ import annotations
 import os
+import sys
 import json
 import queue
 import shutil
@@ -10,6 +11,7 @@ import time
 from collections import deque
 from pathlib import Path
 from .data import ARTIFACTS, inspect_ply
+from .budget import BudgetExpired
 
 
 class Cancelled(Exception): pass
@@ -21,9 +23,11 @@ class ProcessRunner:
         self.cancelled, self.log, self.timeout = cancelled, log, timeout
         self.heartbeat_interval=heartbeat_interval
         self.on_heartbeat=on_heartbeat
+        self.deadline=None
 
     def run(self, args):
         if self.cancelled(): raise Cancelled()
+        if self.deadline is not None and time.monotonic()>=self.deadline:raise BudgetExpired("Worker time budget reached; saving completed work")
         env = {**os.environ, "QT_QPA_PLATFORM": "offscreen", "PYTHONUNBUFFERED": "1", "COLUMNS": "120"}
         process = subprocess.Popen([str(a) for a in args], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace", env=env, start_new_session=os.name != "nt")
         output = queue.Queue()
@@ -53,6 +57,7 @@ class ProcessRunner:
                 done = False
                 while not done or process.poll() is None:
                     if self.cancelled(): raise Cancelled()
+                    if self.deadline is not None and time.monotonic()>=self.deadline:raise BudgetExpired("Worker time budget reached; saving completed work")
                     if time.monotonic() - start > self.timeout: raise TimeoutError("Reconstruction stage exceeded its time limit")
                     now=time.monotonic()
                     if now>=next_heartbeat:
@@ -195,17 +200,46 @@ def run_job(jobs, ident: str, runner_factory=ProcessRunner):
     directory = jobs.directory(ident)
     output = directory / "artifacts"; output.mkdir(exist_ok=True)
     runner = runner_factory(lambda: jobs.cancelled(ident), directory / "engine.log")
-    runner.on_heartbeat=lambda engine,elapsed: jobs.update(ident,worker_heartbeat=time.time(),engine=engine,engine_elapsed=elapsed)
+    runner.deadline=getattr(jobs,'deadline',None)
+    last_saved_step=-1
+    def persist():
+        hook=getattr(jobs,'persist',None)
+        if hook:hook()
+    def save_training():
+        nonlocal last_saved_step
+        from .recovery import snapshot_checkpoint,prune_snapshots
+        saved=snapshot_checkpoint(directory)
+        if saved and saved['step']>last_saved_step:
+            persist();last_saved_step=saved['step'];prune_snapshots(directory)
+            jobs.update(ident,checkpoint_step=saved['step'],checkpoint_saved=time.time())
+    def heartbeat(engine,elapsed):
+        jobs.update(ident,worker_heartbeat=time.time(),engine=engine,engine_elapsed=elapsed)
+        save_training()
+    runner.on_heartbeat=heartbeat
     mode, preset = record["mode"], record["preset"]
     dataset = directory / "dataset"
     artifacts, metrics, outcomes = [], {}, {}
     warnings = []
+    resume_saved=None
     def stage(name, message):
         if jobs.cancelled(ident): raise Cancelled()
+        if runner.deadline is not None and time.monotonic()>=runner.deadline:raise BudgetExpired("Worker time budget reached; saved work can be recovered")
         jobs.update(ident, phase="running", stage=name, stage_started=time.time(), worker_heartbeat=time.time(), engine="", engine_elapsed=0, message=message)
         print(f"[Strata {ident}] {name}: {message}",flush=True)
     try:
-        if mode in {"mesh", "both"}:
+        if runner.deadline is not None and time.monotonic()>=runner.deadline:raise BudgetExpired('Worker time budget reached; saving completed work')
+        if record.get('resume_requested'):
+            from .recovery import inspect_saved
+            resume_saved=inspect_saved(directory,record)
+            expected=record.get('resume_min_checkpoint_step',-1)
+            if expected>=0 and (resume_saved['checkpoint'] is None or resume_saved['checkpoint']['step']<expected):raise RuntimeError('Expected checkpoint is unavailable; refusing to restart training from scratch')
+            if not resume_saved['resume_ready']:raise RuntimeError('No valid saved checkpoint or completed mesh is available for continued splat training')
+            artifacts=list(resume_saved['artifacts']);metrics=dict(resume_saved['metrics']);dataset=resume_saved['dataset']
+            if mode=='both':
+                outcomes['mesh']=dict(status='complete' if 'glb' in artifacts else 'failed',stage='meshing')
+                if 'glb' not in artifacts:warnings.append('Mesh was not available in the saved results; completed camera alignment is reused.')
+            jobs.update(ident,message='Reusing saved work; COLMAP will not be repeated',artifacts=artifacts,outcomes=outcomes)
+        if mode in {"mesh", "both"} and resume_saved is None:
             try:
                 if not capabilities()["mesh"]: raise RuntimeError("Install Nerfstudio and CUDA-enabled COLMAP to generate meshes")
                 stage("alignment", "Matching photos and refining cameras with COLMAP")
@@ -236,7 +270,8 @@ def run_job(jobs, ident: str, runner_factory=ProcessRunner):
                 metrics["mesh"] = reconstruct_surface(runner, dense, output, stage, metrics["dense_cloud"])
                 artifacts += ["glb", "obj", "stl"]
                 outcomes["mesh"] = {"status": "complete"}
-            except Cancelled: raise
+                persist();jobs.update(ident,artifacts=artifacts,metrics=metrics,outcomes=outcomes,outputs_saved=time.time())
+            except (Cancelled,BudgetExpired): raise
             except Exception as exc:
                 outcomes["mesh"] = {"status": "failed", "stage": jobs.get(ident).get("stage", "meshing"), "message": str(exc)[-1800:]}
                 warnings.append("Mesh failed: " + str(exc)[-1800:])
@@ -248,12 +283,23 @@ def run_job(jobs, ident: str, runner_factory=ProcessRunner):
                 if not capabilities()["splat"]: raise RuntimeError("Install Nerfstudio with gsplat/CUDA to train server splats")
                 stage("training", "Optimizing Gaussian splats with Splatfacto; see server log for actual iterations")
                 trained = directory / "trained"
-                runner.run(train_command(prepare_splat_input(dataset,directory / "splat-input"), trained, preset))
+                command=train_command(prepare_splat_input(dataset,directory / "splat-input") if dataset!=directory/'splat-input' else dataset, trained, preset)
+                saved=resume_saved['checkpoint'] if resume_saved else None
+                remaining={"quick":7000,"detail":30000,"max":50000}[preset]-(saved['step']+1) if saved else 1
+                if saved:
+                    command[command.index('--max-num-iterations')+1]=str(max(0,remaining))
+                    command+=['--load-checkpoint',str(saved['path'])]
+                if remaining>0:runner.run(command)
+                save_training()
                 configs = list(trained.rglob("config.yml"))
                 if not configs: raise RuntimeError("Training produced no Nerfstudio checkpoint configuration")
                 stage("exporting", "Exporting and validating the Gaussian PLY")
                 exports = directory / "exports"
-                runner.run(["ns-export", "gaussian-splat", "--load-config", max(configs, key=lambda p: p.stat().st_mtime), "--output-dir", exports])
+                config=max(configs, key=lambda p: p.stat().st_mtime)
+                if saved and remaining<=0:
+                    config=directory/'saved-export-config.yml'
+                    runner.run([sys.executable,'-m','strata_server.export_checkpoint',saved['config'],saved['path'],config])
+                runner.run(["ns-export", "gaussian-splat", "--load-config", config, "--output-dir", exports])
                 files = list(exports.rglob("*.ply"))
                 if not files: raise RuntimeError("No PLY was exported")
                 source = max(files, key=lambda p: p.stat().st_mtime)
@@ -261,7 +307,7 @@ def run_job(jobs, ident: str, runner_factory=ProcessRunner):
                 shutil.copyfile(source, output / ARTIFACTS["splat"])
                 artifacts.append("splat")
                 outcomes["splat"] = {"status": "complete"}
-            except Cancelled: raise
+            except (Cancelled,BudgetExpired): raise
             except Exception as exc:
                 if mode != "both": raise
                 outcomes["splat"] = {"status": "failed", "stage": jobs.get(ident).get("stage", "training"), "message": str(exc)[-1800:]}
@@ -271,8 +317,15 @@ def run_job(jobs, ident: str, runner_factory=ProcessRunner):
         if not artifacts: raise RuntimeError(" | ".join(warnings) or "Reconstruction produced no usable artifacts")
         partial = bool(warnings)
         message = "Partial reconstruction: " + "; ".join(warnings) if partial else "Reconstruction complete"
-        jobs.update(ident, phase="complete", stage="complete", message=message, partial=partial, artifacts=artifacts, metrics=metrics, outcomes=outcomes, warnings=warnings)
+        jobs.update(ident, phase="complete", stage="complete", message=message, partial=partial, artifacts=artifacts, metrics=metrics, outcomes=outcomes, warnings=warnings,resume_requested=False,recovery=dict(resume_ready=mode in {'splat','both'} and 'splat' not in artifacts and (last_saved_step>=0 or 'glb' in artifacts),checkpoint_step=last_saved_step))
         print(f"[Strata {ident}] Reconstruction complete; {len(artifacts)} artifacts published",flush=True)
+    except BudgetExpired as exc:
+        save_training();persist()
+        from .recovery import recover_saved
+        jobs.update(ident,phase='failed',stage='paused',message=str(exc),artifacts=artifacts,metrics=metrics,outcomes=outcomes)
+        recovered=recover_saved(jobs,ident)
+        jobs.update(ident,message='Paused before the worker time limit. '+recovered['message'],budget_paused=True)
+        print(f"[Strata {ident}] Budget reached; no automatic retry",flush=True)
     except Cancelled:
         jobs.cancel(ident)
         print(f"[Strata {ident}] Cancelled",flush=True)

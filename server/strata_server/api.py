@@ -22,7 +22,7 @@ from .pipeline import capabilities, run_job
 from .version import VERSION
 
 
-def create_app(root: Path, key: str, *, jobs=None, dispatch=None, cancel_hook=None, storage_hook=None, artifact_hook=None, status_hook=None, provider="lan", available=None):
+def create_app(root: Path, key: str, *, jobs=None, dispatch=None, cancel_hook=None, storage_hook=None, artifact_hook=None, status_hook=None, provider="lan", available=None, recovery_hook=None, idle_hook=None):
     if len(key) < 24: raise ValueError("Use a server key of at least 24 characters")
     root.mkdir(parents=True, exist_ok=True)
     jobs = jobs or FileJobs(root)
@@ -54,6 +54,7 @@ def create_app(root: Path, key: str, *, jobs=None, dispatch=None, cancel_hook=No
     @application.get("/v1/health", dependencies=[Depends(auth)])
     def health():
         have = available if available is not None else capabilities()
+        have={**have,"recovery":True,"resume_saved":True}
         return {"service": "strata", "protocol": 1, "version": VERSION, "provider": provider, "capabilities": have, "max_upload_bytes": MAX_UPLOAD, "warning": "Modal GPU execution may incur charges" if provider == "modal" else "Processing stays on your configured server"}
 
     @application.post("/v1/jobs", status_code=202, dependencies=[Depends(auth)])
@@ -112,6 +113,44 @@ def create_app(root: Path, key: str, *, jobs=None, dispatch=None, cancel_hook=No
         jobs.cancel(ident)
         if cancel_hook: cancel_hook(ident)
         return jobs.get(ident)
+
+    def stopped_record(ident):
+        record=get(ident)
+        if record['phase'] not in {'failed','complete'}:raise HTTPException(409,'Finish or cancel active work before inspecting saved results; cancelled jobs cannot be resumed.')
+        if idle_hook:
+            try:idle=idle_hook(ident)
+            except Exception:raise HTTPException(503,'Could not verify that the old worker stopped; retry later.')
+            if not idle:raise HTTPException(409,'The previous worker has not stopped yet. Retry later.')
+        return record
+
+    @application.post('/v1/jobs/{ident}/recover',dependencies=[Depends(auth)])
+    def recover(ident:str):
+        with jobs.lock:
+            stopped_record(ident)
+            if recovery_hook:return recovery_hook(ident)
+            from .recovery import recover_saved
+            return recover_saved(jobs,ident)
+
+    @application.post('/v1/jobs/{ident}/resume',status_code=202,dependencies=[Depends(auth)])
+    def resume(ident:str,checkpoint_step:int=-1):
+        with jobs.lock:
+            stopped_record(ident)
+            if recovery_hook:record=recovery_hook(ident)
+            else:
+                from .recovery import recover_saved
+                record=recover_saved(jobs,ident)
+            if checkpoint_step < -1 or checkpoint_step>=1_000_000:raise HTTPException(400,'Invalid checkpoint expectation')
+            if checkpoint_step>=0 and record.get('recovery',{}).get('checkpoint_step',-1)<checkpoint_step:raise HTTPException(409,'The expected saved checkpoint is no longer available. Inspect saved files again before continuing; no fresh training was started.')
+            if not record.get('recovery',{}).get('resume_ready'):raise HTTPException(409,'No resumable saved splat work was found. Recover existing outputs first; a new reconstruction is a separate action.')
+            have=available if available is not None else capabilities()
+            if not have.get('splat'):raise HTTPException(503,'Splat training is not installed on this server; saved exports remain recoverable.')
+            if sum(r['phase'] not in TERMINAL for r in jobs.records())>=16:raise HTTPException(429,'Server queue is full')
+            record=jobs.update(ident,phase='queued',stage='queued',message='Waiting for a GPU worker to continue saved training',resume_requested=True,resume_min_checkpoint_step=checkpoint_step,budget_paused=False,worker_started=0,worker_heartbeat=0,worker_deadline=0,engine='',engine_elapsed=0,attempt=record.get('attempt',1)+1)
+            try:dispatch(ident)
+            except Exception:
+                jobs.update(ident,phase='failed',message='Could not start continued training; saved files are kept.')
+                raise HTTPException(503,'Could not start continued training; saved files are kept.')
+            return jobs.get(ident)
 
     @application.get("/v1/jobs/{ident}/artifacts/{kind}", dependencies=[Depends(auth)])
     def artifact(ident: str, kind: str):

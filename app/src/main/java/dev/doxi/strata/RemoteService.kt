@@ -68,6 +68,8 @@ class RemoteService:Service() {
                 try {
                     val config=SecureServer(this)
                     val resume=intent.getBooleanExtra("resume",false)
+                    val recover=intent.getBooleanExtra("recover",false)
+                    val continueSaved=intent.getBooleanExtra("continueSaved",false)
                     val remote=if(resume) JSONObject(File(project,"remote.json").readText()) else JSONObject().put("id",UUID.randomUUID().toString()).put("profile",config.snapshot()).put("mode",intent.getStringExtra("mode") ?: "splat").put("preset",intent.getStringExtra("preset") ?: "detail").put("submitted",false)
                     Store.atomic(File(project,"remote.json"),remote)
                     val profile=config.decode(remote.getString("profile"));val http=ServerHttp(profile);connection=http
@@ -86,9 +88,14 @@ class RemoteService:Service() {
                         }
                     }
                     val caps=health.getJSONObject("capabilities");val mode=remote.getString("mode")
-                    require((mode=="mesh" || caps.optBoolean("splat")) && (mode=="splat" || caps.optBoolean("mesh"))) { "The server does not have the requested reconstruction engines configured" }
+                    require(recover || if(continueSaved) caps.optBoolean("splat") else (mode=="mesh" || caps.optBoolean("splat")) && (mode=="splat" || caps.optBoolean("mesh"))) { "The server does not have the requested reconstruction engines configured" }
                     var result:JSONObject
-                    if(!remote.optBoolean("submitted")) {
+                    if(recover||continueSaved) {
+                        require(caps.optBoolean(if(recover) "recovery" else "resume_saved")){"Update the deployed server to 0.3.3 or newer before using saved-work recovery"}
+                        state(if(recover) "Checking saved server files; no GPU reconstruction starts" else "Requesting continuation from saved work",extra=JSONObject().put("stage","reconnecting"))
+                        result=http.json("/v1/jobs/$id/"+(if(recover) "recover" else "resume?checkpoint_step="+intent.getLongExtra("expectedCheckpoint",-1)),"POST")
+                        remote.put("complete",false);Store.atomic(File(project,"remote.json"),remote)
+                    } else if(!remote.optBoolean("submitted")) {
                         val existing=try {status()} catch(e:ServerError) {if(e.status==404)null else throw e}
                         if(existing!=null) {require(existing.optString("phase")!="uploading") { "The server is still receiving this upload. Wait, then Resume/download." };result=existing}
                         else {Store.validateDataset(File(project,"dataset.zip"));result=http.upload(File(project,"dataset.zip"),id,remote.getString("mode"),remote.getString("preset")) { sent,total->progress("Uploading original dataset",sent,total) };lastContact=System.currentTimeMillis()}
@@ -104,8 +111,9 @@ class RemoteService:Service() {
                         val delay=polling.observe(result.optString("phase"),result.optString("stage"),message)
                         Thread.sleep(delay);result=status()
                     }
+                    if(result.has("recovery")){remote.put("recovery",result.getJSONObject("recovery"));Store.atomic(File(project,"remote.json"),remote)}
                     when(result.getString("phase")) {
-                        "failed"->{Store.atomic(File(project,"remote.json"),remote.put("complete",true));error(result.optString("message","Server reconstruction failed"))}
+                        "failed"->{Store.atomic(File(project,"remote.json"),remote.put("complete",true));state(result.optString("message","Server reconstruction stopped"),"failed",RemoteJobStatus.details(result));return@thread}
                         "cancelled"->{Store.atomic(File(project,"remote.json"),remote.put("complete",true));state("Server job cancelled","cancelled");return@thread}
                     }
                     val output=File(project,"output").apply { mkdirs() };val artifacts=result.getJSONArray("artifacts")
@@ -125,7 +133,7 @@ class RemoteService:Service() {
                     val completion=RemoteJobStatus.completion(result)
                     remote.put("complete",true).put("result",completion);Store.atomic(File(project,"remote.json"),remote)
                     state(completion.getString("message"),"complete",completion)
-                } catch(e:Exception) { if(!stopped) state("Server job: ${e.message}. The original dataset is kept; use Resume/download to reconnect.","failed") }
+                } catch(e:Exception) { if(!stopped) state("Server job: ${e.message}. The original dataset is kept. Resume/download only reconnects; Recover saved outputs inspects existing files.","failed") }
                 finally { stopSelf() }
             }
         } catch(e:Exception) { if(::project.isInitialized) state(e.message ?: "Could not start server transfer","failed");stopSelf() }

@@ -4,6 +4,7 @@ import os
 import shutil
 import threading
 import modal
+from strata_server.budget import SOFT_SECONDS,WORKER_SECONDS
 
 # Local deployment shell variables are not automatically present during remote imports.
 # Persist only resource names, never account/endpoint keys, in both container images.
@@ -19,7 +20,7 @@ table = modal.Dict.from_name(runtime_env["STRATA_MODAL_DICT"], create_if_missing
 root = Path("/data/jobs")
 source = str(Path(__file__).parent / "strata_server")
 api_image = (modal.Image.debian_slim(python_version="3.11")
-    .pip_install("fastapi>=0.115,<1", "pillow>=10,<13")
+    .pip_install("fastapi>=0.115,<1", "pillow>=10,<13", "numpy>=1.26,<3", "trimesh>=4.4,<5", "plyfile>=1,<2")
     .env(runtime_env)
     .add_local_dir(source, "/root/strata_server"))
 gpu_image = (modal.Image.from_registry("ghcr.io/nerfstudio-project/nerfstudio:1.1.5")
@@ -53,16 +54,19 @@ class ModalJobs:
     def records(self): return [value for key, value in table.items() if key.startswith("job:")]
 
 
-@app.function(image=gpu_image, gpu="L4", cpu=8, memory=32768, timeout=7200, startup_timeout=300, max_containers=1, volumes={"/data": volume})
+@app.function(image=gpu_image, gpu="L4", cpu=8, memory=32768, timeout=WORKER_SECONDS, startup_timeout=300, max_containers=1, volumes={"/data": volume})
 def reconstruct(ident: str):
     print(f"[Strata {ident}] GPU worker entered; loading committed dataset",flush=True)
     from strata_server.monitoring import CancellationFlag
+    import time
     class WorkerJobs(ModalJobs):
         def __init__(self):
             super().__init__()
+            self.deadline=time.monotonic()+SOFT_SECONDS
             self.cancel_flag = CancellationFlag(lambda: ModalJobs.cancelled(self, ident))
         def cancelled(self, job):
             return self.cancel_flag.check() if job == ident else super().cancelled(job)
+        def persist(self):volume.commit()
         def update(self, ident, **changes):
             # Publish completion only after the artifacts are durable and visible to the API container.
             if changes.get("phase") == "complete":
@@ -71,7 +75,7 @@ def reconstruct(ident: str):
     jobs=WorkerJobs()
     try:
         import time
-        jobs.update(ident,phase="running",stage="loading",message="GPU worker allocated; loading capture data",worker_started=time.time(),worker_heartbeat=time.time())
+        jobs.update(ident,phase="running",stage="loading",message="GPU worker allocated; loading capture data",worker_started=time.time(),worker_heartbeat=time.time(),worker_limit=WORKER_SECONDS,worker_deadline=time.time()+SOFT_SECONDS)
         if jobs.cancelled(ident):return
         volume.reload()
         print(f"[Strata {ident}] Dataset volume reloaded; starting reconstruction",flush=True)
@@ -118,6 +122,15 @@ def api():
     reconcile = CallMonitor(jobs, poll_call, terminal_errors=(
         modal.exception.FunctionTimeoutError, modal.exception.RemoteError,
         modal.exception.ExecutionError, modal.exception.InternalFailure))
+    def idle(ident):
+        try:poll_call(ident);return True
+        except TimeoutError:return False
+        except (modal.exception.FunctionTimeoutError,modal.exception.RemoteError,modal.exception.ExecutionError,modal.exception.InternalFailure):return True
+    def recover(ident):
+        from strata_server.recovery import recover_saved
+        with files_lock:
+            volume.reload()
+            return recover_saved(jobs,ident)
     def artifact(ident, kind):
         # Responses stream a local copy; no open Volume handle blocks subsequent reloads.
         with files_lock:
@@ -127,4 +140,4 @@ def api():
             cache.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(original, cache)
             return cache
-    return create_app(root, os.environ["STRATA_API_KEY"], jobs=jobs, dispatch=dispatch, cancel_hook=cancel, storage_hook=store, artifact_hook=artifact, status_hook=reconcile, provider="modal", available={"splat": True, "mesh": True, "tools": {"worker": "Nerfstudio + COLMAP"}})
+    return create_app(root, os.environ["STRATA_API_KEY"], jobs=jobs, dispatch=dispatch, cancel_hook=cancel, storage_hook=store, artifact_hook=artifact, status_hook=reconcile, recovery_hook=recover, idle_hook=idle, provider="modal", available={"splat": True, "mesh": True, "tools": {"worker": "Nerfstudio + COLMAP"}})

@@ -27,4 +27,13 @@ class RemoteJobStatusTest {
         assertEquals("failed",result.getJSONObject("outcomes").getJSONObject("mesh").getString("status"))
         assertFalse(RemoteJobStatus.completion(JSONObject()).getBoolean("partial"))
     }
+    @Test fun workerDeadlineAndCheckpointArePreservedWithoutAnInventedCompletionPercentage() {
+        val record=JSONObject().put("worker_deadline",200.0).put("worker_limit",7200).put("checkpoint_step",9999).put("recovery",JSONObject().put("resume_ready",true))
+        val status=RemoteJobStatus.details(record)
+        assertEquals(200000.0,status.getDouble("workerDeadline"),0.0)
+        assertEquals(7200,status.getLong("workerLimit"))
+        assertEquals(9999,status.getLong("checkpointStep"))
+        assertFalse(status.has("percent"))
+        assertTrue(RemoteJobStatus.completion(record).getJSONObject("recovery").getBoolean("resume_ready"))
+    }
 }

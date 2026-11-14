@@ -8,13 +8,15 @@ object RemoteJobStatus {
         val outcomes=record.optJSONObject("outcomes") ?: JSONObject()
         val summary=listOf("mesh" to "Mesh","splat" to "Splats").mapNotNull { (key,label)->outcomes.optJSONObject(key)?.let { "$label: ${it.optString("status","unknown")}" } }.joinToString("; ")
         return JSONObject().put("partial",record.optBoolean("partial"))
-            .put("outcomes",record.optJSONObject("outcomes") ?: JSONObject())
+            .put("outcomes",record.optJSONObject("outcomes") ?: JSONObject()).put("recovery",record.optJSONObject("recovery") ?: JSONObject())
             .put("message",if(record.optBoolean("partial")) "Downloaded available results. $summary. " + record.optString("message","Some outputs failed").take(2400) else "Server reconstruction downloaded and validated")
     }
     fun details(record:JSONObject):JSONObject {
         val result=JSONObject().put("stage",record.optString("stage")).put("serverPhase",record.optString("phase")).put("outcomes",record.optJSONObject("outcomes") ?: JSONObject())
-        for((source,target) in listOf("created" to "serverCreated","stage_started" to "stageStarted","worker_heartbeat" to "workerHeartbeat"))
+        for((source,target) in listOf("created" to "serverCreated","stage_started" to "stageStarted","worker_heartbeat" to "workerHeartbeat","worker_deadline" to "workerDeadline"))
             result.put(target,milliseconds(record.optDouble(source,0.0)))
+        result.put("checkpointStep",record.optLong("checkpoint_step",-1))
+        result.put("workerLimit",record.optLong("worker_limit",0))
         result.put("engine",record.optString("engine").take(80))
         val elapsed=record.optDouble("engine_elapsed",0.0)
         result.put("engineElapsed",if(elapsed.isFinite()&&elapsed>=0&&elapsed<1e9) elapsed else 0.0)

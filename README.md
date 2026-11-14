@@ -1,9 +1,23 @@
 # strata
 vibe coded app cause bored
 
-# Strata Preview 0.3.2
+# Strata Preview 0.3.3
 
 An independent Android scanner with local RGB/pose/depth capture, experimental on-device Gaussian training, an offline splat/mesh viewer, and optional reconstruction on your own GPU server. No Scaniverse libraries or assets are included.
+
+## Timed-out jobs and saved-work recovery (0.3.3)
+
+The reported Both job hit the original hardcoded 7,200-second Modal execution timeout while training splats after meshing. The previous API hid artifacts unless the entire job completed, and the app marked failed jobs done so its reconnect button disappeared. This was a limit in Strata's deployment, not evidence of an out-of-memory failure. Execution time is distinct from upload/queue time.
+
+Install the APK, then Settings → Modal account → Update server from GitHub using your existing deployment/volume. Open the failed scan and choose **Recover saved outputs · no GPU reconstruction**. This authenticated action checks the existing job's committed files on the CPU API and downloads valid exports. It does not upload photos or dispatch a GPU. CPU/storage use may still incur provider charges. Do not delete the old deployment, volume or original capture. Saved files may exist because Modal background-commits volumes, but recovery cannot restore data that was never committed or repair an invalid checkpoint.
+
+If usable saved splat work exists, a separate **Continue training from checkpoint** / **Train splats from saved mesh** action appears. Its confirmation distinguishes a saved checkpoint from starting splat optimization anew with already-completed mesh/alignment. Both skip COLMAP and reuse the same job ID/server/profile, without reuploading images. This explicitly dispatches another GPU worker with the same two-hour execution ceiling and can incur charges. The server rechecks that the prior call stopped and rejects duplicate/active/cancelled jobs. If an expected checkpoint disappears, it refuses to fall back to fresh training. If saved alignment/mesh/checkpoint evidence is absent, continued work is unavailable; unfinished COLMAP stages are not resumed by this release.
+
+New workers keep the 7,200-second ceiling and use a best-effort 6,900-second work budget, reserving five minutes for stopping the engine and saving. Completed mesh exports are explicitly committed before splat training. Periodic completed Nerfstudio checkpoints are copied atomically to stable snapshot files and committed; two additional snapshots are retained, while original training files are kept. A budget stop tries to publish usable partial exports and leaves continuation to the user. Storage errors, hard kills or a save exceeding the reserve can still prevent the latest save. The dashboard shows the actual worker save deadline and saved checkpoint step, not a completion ETA. This does not change a worker already deployed/running on older source.
+
+Recovery validates trusted job exports on the CPU: mesh files up to 256 MiB each, splat/point PLY up to 1 GiB, with format/geometry checks. Checkpoint inspection checks Torch ZIP structure and matching server-generated config paths without deserializing pickle on the API. This is candidate detection, not proof the weights will load. Only a later explicitly requested GPU operation loads the private server-generated checkpoint. No live account, GPU, deployment or original user dataset was accessed to develop this fix. Nerfstudio 1.1.5 treats max iterations as additional iterations when resuming, so the command subtracts the saved step from the selected target instead of repeating the full target count.
+
+References: [Modal timeouts](https://modal.com/docs/guide/timeouts), [Modal volume commits](https://modal.com/docs/guide/volumes), pinned [Nerfstudio 1.1.5 trainer](https://github.com/nerfstudio-project/nerfstudio/blob/v1.1.5/nerfstudio/engine/trainer.py).
 
 ## Server redirect handling (0.3.2)
 
