@@ -66,47 +66,67 @@ class SecureServer(private val context:Context,private val scope:String="server"
 }
 
 class ServerError(val status:Int,message:String):java.io.IOException(message)
-class ServerHttp(private val profile:ServerProfile) {
+class ServerHttp(private val profile:ServerProfile,private val connectionFactory:(URL)->HttpURLConnection={it.openConnection() as HttpURLConnection}) {
     @Volatile private var active:HttpURLConnection?=null
     @Volatile var stopped=false
     fun stop() { stopped=true;active?.disconnect() }
-    private fun open(path:String,method:String):HttpURLConnection {
+    private fun open(address:String,method:String):HttpURLConnection {
         check(!stopped) { "Transfer cancelled" }
-        return (URL(profile.url+path).openConnection() as HttpURLConnection).apply {
-            instanceFollowRedirects=false;requestMethod=method;connectTimeout=20000;readTimeout=120000
+        return connectionFactory(URL(address)).apply {
+            instanceFollowRedirects=false;requestMethod=method;connectTimeout=20000;readTimeout=180000
             setRequestProperty("X-Strata-Key",profile.key)
             if(profile.proxy.isNotEmpty()) setRequestProperty("Authorization","Bearer ${profile.proxy}")
             active=this
         }
     }
+    private fun close(c:HttpURLConnection) { c.disconnect();if(active===c)active=null }
+    private fun request(path:String,method:String,readTimeoutMs:Int=180000,body:((HttpURLConnection)->Unit)?=null):HttpURLConnection {
+        var address=profile.url+path;var verb=method;var redirects=0;var replays=0
+        while(true) {
+            val c=open(address,verb);c.readTimeout=readTimeoutMs
+            try {
+                if(verb=="POST") {
+                    if(body!=null) body(c) else {c.doOutput=true;c.setFixedLengthStreamingMode(0);c.outputStream.close()}
+                }
+                val status=c.responseCode
+                if(status in ServerRedirect.statuses) {
+                    if(redirects++>=ServerRedirect.LIMIT)throw ServerError(status,"Server redirect limit reached. The job may still be running; resume monitoring later.")
+                    val next=try {ServerRedirect.next(address,status,c.getHeaderField("Location"),verb)}catch(e:Exception){throw ServerError(status,e.message ?: "Unsafe server redirect")}
+                    if(next.method=="POST"&&++replays>3)throw ServerError(status,"POST redirect limit reached; the request was not sent again.")
+                    close(c);address=next.url;verb=next.method;continue
+                }
+                check(c)
+                return c
+            } catch(e:Exception) {close(c);throw e}
+        }
+    }
     private fun check(connection:HttpURLConnection) {
         val code=connection.responseCode
         if(code !in 200..299) {
-            val detail=connection.errorStream?.bufferedReader()?.use { it.readText().take(1800) } ?: "HTTP $code"
-            throw ServerError(code,if(code in 300..399) "The server redirected the request. Enter its final HTTPS URL." else "Server returned $code: $detail")
+            val detail=connection.errorStream?.bufferedReader()?.use { reader->val chars=CharArray(1800);val n=reader.read(chars);if(n>0)String(chars,0,n) else "HTTP $code" } ?: "HTTP $code"
+            throw ServerError(code,if(code in 300..399) "Unsupported server response (HTTP $code). The saved endpoint was kept." else "Server returned $code: $detail")
         }
     }
-    fun json(path:String,method:String="GET",readTimeoutMs:Int=120000):JSONObject {
-        val c=open(path,method)
-        c.readTimeout=readTimeoutMs
-        try { if(method=="POST") { c.doOutput=true;c.setFixedLengthStreamingMode(0);c.outputStream.close() };check(c);return JSONObject(c.inputStream.bufferedReader().use { it.readText().also { text->require(text.length<1024*1024) { "Server response is too large" } } }) }
-        finally { c.disconnect();active=null }
+    fun json(path:String,method:String="GET",readTimeoutMs:Int=180000):JSONObject {
+        val c=request(path,method,readTimeoutMs)
+        try { return JSONObject(c.inputStream.bufferedReader().use { it.readText().also { text->require(text.length<1024*1024) { "Server response is too large" } } }) }
+        finally { close(c) }
     }
     fun upload(file:File,id:String,mode:String,preset:String,onBytes:(Long,Long)->Unit):JSONObject {
         require(mode in listOf("splat","mesh","both") && preset in listOf("quick","detail","max"))
-        val c=open("/v1/jobs?mode=$mode&preset=$preset","POST")
-        try {
-            c.doOutput=true;c.setFixedLengthStreamingMode(file.length());c.setRequestProperty("Content-Type","application/zip");c.setRequestProperty("X-Request-ID",id)
-            c.outputStream.buffered(65536).use { out->file.inputStream().use { input->val buffer=ByteArray(65536);var sent=0L;while(true) { check(!stopped) { "Transfer cancelled" };val n=input.read(buffer);if(n<0) break;out.write(buffer,0,n);sent+=n;onBytes(sent,file.length()) } } }
-            check(c);return JSONObject(c.inputStream.bufferedReader().use { it.readText() })
-        } finally { c.disconnect();active=null }
+        val c=request("/v1/jobs?mode=$mode&preset=$preset","POST") { connection->
+            connection.doOutput=true;connection.setFixedLengthStreamingMode(file.length());connection.setRequestProperty("Content-Type","application/zip");connection.setRequestProperty("X-Request-ID",id)
+            connection.outputStream.buffered(65536).use { out->file.inputStream().use { input->val buffer=ByteArray(65536);var sent=0L;while(true) { check(!stopped) { "Transfer cancelled" };val n=input.read(buffer);if(n<0) break;out.write(buffer,0,n);sent+=n;onBytes(sent,file.length()) } } }
+        }
+        try { return JSONObject(c.inputStream.bufferedReader().use { it.readText() }) }
+        finally { close(c) }
     }
     fun download(path:String,destination:File,onBytes:(Long,Long)->Unit) {
-        val c=open(path,"GET");val temp=File(destination.parentFile,destination.name+".part")
+        val c=request(path,"GET");val temp=File(destination.parentFile,destination.name+".part")
         try {
-            check(c);val total=c.contentLengthLong;require(total<=1024L*1024*1024) { "Artifact exceeds the 1 GiB download limit" }
+            val total=c.contentLengthLong;require(total<=1024L*1024*1024) { "Artifact exceeds the 1 GiB download limit" }
             c.inputStream.use { input->temp.outputStream().buffered().use { out->val buffer=ByteArray(65536);var received=0L;while(true) { check(!stopped) { "Transfer cancelled" };val n=input.read(buffer);if(n<0) break;received+=n;require(received<=1024L*1024*1024);out.write(buffer,0,n);onBytes(received,total) };require(total<0 || received==total) { "Download was truncated" } } }
             check(temp.renameTo(destination)) { "Could not save downloaded artifact" }
-        } finally { temp.delete();c.disconnect();active=null }
+        } finally { temp.delete();close(c) }
     }
 }

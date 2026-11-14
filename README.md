@@ -1,9 +1,19 @@
 # strata
 vibe coded app cause bored
 
-# Strata Preview 0.3.1
+# Strata Preview 0.3.2
 
 An independent Android scanner with local RGB/pose/depth capture, experimental on-device Gaussian training, an offline splat/mesh viewer, and optional reconstruction on your own GPU server. No Scaniverse libraries or assets are included.
+
+## Server redirect handling (0.3.2)
+
+Previous APKs rejected every HTTP redirect with a final-URL error. The client now follows up to 20 redirects on the same origin (same protocol, hostname and effective port), including Modal-style 303 result URLs and relative/query-only locations. Credentials remain scoped to that origin. Redirects to another host, a different protocol/port, embedded user credentials, fragments and malformed destinations are blocked before the next request. Error messages do not include redirect query tokens. The screenshot did not include its Location header, so its exact redirect type/destination is unconfirmed.
+
+After a 303 the client retrieves the result with GET without uploading again. Upload 307/308 redirects preserve the streamed bytes and X-Request-ID; at most three POST replays are allowed. Ambiguous POST 301/302 redirects are rejected. Downloads use the same redirect checks and keep their existing size/truncation checks and atomic save. Default response timeouts are three minutes to permit Modal's documented 150-second result redirect; status polling retains its shorter timeout/backoff. Redirect URLs are temporary request state and do not replace the saved server endpoint.
+
+Install this APK, then tap Resume / download server job for the existing job. This client fix needs no server redeployment or Termux reinstall. It does not start a new reconstruction automatically. Your existing local splat remains available. A blocked cross-origin redirect still needs investigation of the configured endpoint rather than automatic forwarding of account credentials.
+
+References: [Modal request timeouts](https://modal.com/docs/guide/webhook-timeouts), [RFC 9110 redirect semantics](https://www.rfc-editor.org/rfc/rfc9110.html#section-15.4).
 
 ## Mesh recovery and partial results (0.3.1)
 

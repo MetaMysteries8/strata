@@ -1,3 +1,7 @@
+# Same-origin redirects: 0.3.2
+
+ServerHttp now follows bounded same-origin redirects for status, upload results and artifact downloads. 303 changes POST to GET; 307/308 preserve streamed bytes/idempotency keys with bounded replays. Cross-origin/unsafe destinations remain blocked without leaking credentials/query tokens. Existing saved endpoint/job identity is retained. Response timeouts allow Modal's 150-second result handoff; status polling keeps its own shorter timeout. This APK fix needs no cloud redeploy and is tested with synthetic local servers/connection fixtures.
+
 # Mesh failure recovery: 0.3.1
 
 The reported empty-triangle failure is now recoverable where COLMAP's alternate Delaunay mesher produces a valid surface. Dense point/normal diagnostics and finite/nondegenerate mesh checks were added. Both mode handles mesh/splat errors independently; usable outputs and dense points remain downloadable with partial warnings and per-output outcomes. Android preserves those warnings and exposes dense-point PLY export. Cancellation still stops further work. No live scan retry or cloud deployment was performed.

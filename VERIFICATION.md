@@ -1,3 +1,11 @@
+# Verification: Preview 0.3.2
+
+Eight new Android JVM regressions exercise the actual ServerHttp client: query-only GET 303 retaining the job path/auth headers, upload POST 303 switching to GET without replay, upload 307/308 preserving exact 130,000-byte input and request ID, redirected artifact byte equality, unsafe-origin/malformed destination rejection without query-secret exposure, no second connection for blocked hosts, repeated-result redirect bounds and cancellation, and POST replay bounds. The streaming cases use local TCP HTTP servers; pure HTTPS policy/bounds cases use injected HttpURLConnection fixtures. They do not contact the user's Modal endpoint.
+
+The release workflow builds/tests the APK with its existing Preview signature and runs server/viewer checks. The reported screenshot confirms a redirect response but not its status/Location: actual provider redirect type and real phone reconnection are unverified until tested on-device. No live Modal account deployment, scan upload or GPU task was performed for this client fix.
+
+Prior verification follows as historical evidence.
+
 # Verification: Preview 0.3.1
 
 Local Python checks: 69 passed, including eight mesh-recovery regressions. Local UI checks: 11 passed. The unchanged viewer loader checks and Android build/JVM tests are run by the release workflow. One new JVM test checks retained partial-result warnings; one new UI test checks failed/skipped stages.
